@@ -1,0 +1,14 @@
+[package]
+name = "maliciousfileutil"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reqwest = { version = "0.11.11", features = ["json"] }
+tokio = { version = "1.20.1", features = ["full"] }
+serde = { version = "1.0.141" }
+serde_json = { version = "1.0.82" }
+zip = { version = "0.6.2" }
+futures = { version = "0.3.21" }
+rpassword = { version = "7.0" }
+age = { version = "0.8.1" }
