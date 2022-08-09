@@ -1,6 +1,6 @@
 [package]
 name = "maliciousfileutil"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -11,3 +11,4 @@ serde_json = { version = "1.0.82" }
 zip = { version = "0.6.2" }
 futures = { version = "0.3.21" }
 rpassword = { version = "7.0" }
+aes-gcm-siv = { version = "0.11.1" }

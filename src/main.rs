@@ -1,8 +1,14 @@
+use aes_gcm_siv::Aes256GcmSiv;
+use aes_gcm_siv::KeyInit;
+use aes_gcm_siv::Nonce;
+use aes_gcm_siv::aead::Aead;
+use aes_gcm_siv::aead::generic_array::GenericArray;
 use reqwest;
 use rpassword;
 use tokio::task;
 use std::collections::HashMap;
 use std::path::Path;
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering;
@@ -20,23 +26,31 @@ async fn main() {
     }
 
     loop {
-        print!("Do you want to\n(d)ownload\n(de)obfuscate\n");
+        print!("1. download\n2. backup\n3. restore\n4. run\nType the number of the action you want to run: ");
         io::stdout().flush().unwrap();
         let mut startbuf = String::new();
         io::stdin().read_line(&mut startbuf).expect("Failed to read from stdin");
         let execute = startbuf.trim().to_string();
-        if execute != "d" && execute != "de" {
-            println!("Invalid option");
+        if execute != "1" && execute != "2" && execute != "3" && execute != "4" {
+            println!("Invalid option\n");
             continue;
         }
 
-        if execute == "d" {
+        if execute == "1" {
             download().await;
             return;
         }
-        else if execute == "de" {
-            deobfuscate();
+        else if execute == "2" {
+            backup();
             return;
+        }
+        else if execute == "3" {
+            restore();
+            return;
+        }
+        else if execute == "4" {
+            run();
+            return
         }
     }
 
@@ -66,18 +80,18 @@ async fn download() {
     let msjson: Value = match serde_json::from_str(&msres) {
         Ok(json) => json,
         Err(_) => {
-            println!("Failed to get data from Malshare: Invalid API key or there is no quota remaining");
+            println!("\nFailed to get data from Malshare: Invalid API key or there is no quota remaining");
             loop {
-                print!("Do you want to\n(q)uit\n(c)ontinue\n");
+                print!("Do you want to\n1. continue\n2. quit\nType the number of the action you want to run: ");
                 io::stdout().flush().unwrap();
                 let mut failbuf = String::new();
                 io::stdin().read_line(&mut failbuf).expect("Failed to read from stdin");
                 let answer = failbuf.trim().to_string();
-                if answer != "q" && answer != "c" {
-                    println!("Invalid answer");
+                if answer != "1" && answer != "2" {
+                    println!("Invalid option\n");
                     continue;
                 }
-                if answer == "q" {
+                if answer == "2" {
                     return;
                 }
                 break;
@@ -110,19 +124,46 @@ async fn download() {
     if Path::new("samples/").exists() {
         let dirstat = fs::read_dir("samples/").unwrap();
         if dirstat.count() != 0 {
+            println!("\nThe samples directory already exists");
             loop {
-                print!("The samples directory already exists, do you want to\n(d)elete\n(b)ackup\n");
+                print!("Do you want to\n1. delete\n2. backup\nType the number of the action you want to run: ");
                 io::stdout().flush().unwrap();
                 let mut samplebuf = String::new();
                 io::stdin().read_line(&mut samplebuf).expect("Failed to read from stdin");
                 let sampleanswer = samplebuf.trim().to_string();
-                if sampleanswer == "d" {
+                if sampleanswer == "1" {
                     println!("Deleting the samples directory...");
                     fs::remove_dir_all("samples/").unwrap();
                     println!("Done");
                     break;
                 }
-                else if sampleanswer == "b" {
+                else if sampleanswer == "2" {
+                    if Path::new("samples-backup/").exists() {
+                        let backupstat = fs::read_dir("samples-backup/").unwrap();
+                        if backupstat.count() != 0 {
+                            println!("\nThe backup directory already exists");
+                            loop {
+                                print!("Do you want to\n1. delete\n2. quit\nType the number of the action you want to run: ");
+                                io::stdout().flush().unwrap();
+                                let mut backupbuf = String::new();
+                                io::stdin().read_line(&mut backupbuf).expect("Failed to read from stdin");
+                                let backupanswer = backupbuf.trim().to_string();
+                                if backupanswer != "1" && backupanswer != "2" {
+                                    println!("Invalid option\n")
+                                }
+                                if backupanswer == "1" {
+                                    println!("Deleting the backup directory...");
+                                    fs::remove_dir_all("samples-backup/").unwrap();
+                                    println!("Done");
+                                    break;
+                                }
+                                if backupanswer == "2" {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    println!("Backing up samples...");
                     fs::create_dir_all("samples-backup/").unwrap();
                     let backupfiles = fs::read_dir("samples/").unwrap();
                     for backupfile in backupfiles {
@@ -131,16 +172,17 @@ async fn download() {
                             fullfile = format!("{}", backupfile.as_ref().unwrap().path().file_name().unwrap().to_str().unwrap());
                         }
                         else {
-                            fullfile = format!("{}.{}", backupfile.as_ref().unwrap().path().file_name().unwrap().to_str().unwrap(), backupfile.as_ref().unwrap().path().extension().unwrap().to_str().unwrap());
+                            fullfile = format!("{}", backupfile.as_ref().unwrap().path().file_name().unwrap().to_str().unwrap());
                         }
                         fs::copy(backupfile.as_ref().unwrap().path().display().to_string(), format!("samples-backup/{}", fullfile)).unwrap();
                         fs::remove_file(backupfile.as_ref().unwrap().path().display().to_string()).unwrap();
                     }
                     fs::remove_dir_all("samples/").unwrap();
+                    println!("Done");
                     break;
                 }
                 else {
-                    println!("Invalid option");
+                    println!("Invalid option\n");
                 }
             }
         }  
@@ -178,7 +220,7 @@ async fn download() {
             let downloadedcopy = downloaded.load(Ordering::SeqCst).clone();
             let mut out = File::create(format!("temp/sample{}.zip", downloadedcopy)).unwrap();
     
-            let mut bytes : &[u8] = &res;
+            let mut bytes: &[u8] = &res;
             io::copy(&mut bytes, &mut out).unwrap();
     
             let zip = File::open(format!("temp/sample{}.zip", downloadedcopy)).unwrap();
@@ -200,29 +242,11 @@ async fn download() {
             let mut data = Vec::new();
             file.read_to_end(&mut data).unwrap();
             
-            let mut fileout = File::create(format!("samples/sample{}", downloaded.load(Ordering::SeqCst))).unwrap();
+            let mut fileout = File::create(format!("samples/sample{}.exe", downloaded.load(Ordering::SeqCst))).unwrap();
 
-            let databytes : &mut [u8] = &mut data;
+            let mut databytes: &[u8] = &data;
 
-            let bytecount = databytes.iter_mut().count();
-            let split = databytes.iter_mut().count() / 25;
-            let mut splitcount = 0;
-            let mut current = 0;
-
-            for byte in databytes.iter_mut().take(bytecount) {
-                    if current % split == 0 {
-                        splitcount += 1;
-                    }
-                    let canadd = byte.checked_add(splitcount);
-                    if canadd != None {
-                        *byte += splitcount;
-                    }
-                    current += 1;
-            }
-
-            let mut samplebytes : &[u8] = databytes;
-
-            io::copy(&mut samplebytes, &mut fileout).unwrap();
+            io::copy(&mut databytes, &mut fileout).unwrap();
     
             println!("Downloaded file {}/{} from Malwarebazaar", downloaded.load(Ordering::SeqCst), count.load(Ordering::SeqCst));
             downloaded.fetch_add(1, Ordering::SeqCst);
@@ -245,30 +269,11 @@ async fn download() {
                 .await
                 .unwrap();
 
-            let mut result : Vec<u8> = res.to_vec();
-            let resbytes : &mut [u8] = &mut result;
-
-            let bytecount = resbytes.iter_mut().count();
-            let split = resbytes.iter_mut().count() / 25;
-            let mut splitcount = 0;
-            let mut current = 0;
-
-            for byte in resbytes.iter_mut().take(bytecount) {
-                    if current % split == 0 {
-                        splitcount += 1;
-                    }
-                    let canadd = byte.checked_add(splitcount);
-                    if canadd != None {
-                        *byte += splitcount;
-                    }
-                    current += 1;
-            }
+            let mut resbytes: &[u8] = &res;
         
-            let mut bytes : &[u8] = resbytes;
-        
-            let mut out = File::create(format!("samples/sample{}", downloaded_clone.load(Ordering::SeqCst))).unwrap();
+            let mut out = File::create(format!("samples/sample{}.exe", downloaded_clone.load(Ordering::SeqCst))).unwrap();
 
-            io::copy(&mut bytes, &mut out).unwrap();
+            io::copy(&mut resbytes, &mut out).unwrap();
 
             println!("Downloaded file {}/{} from Malshare", downloaded_clone.load(Ordering::SeqCst), count_clone.load(Ordering::SeqCst));
             downloaded_clone.fetch_add(1, Ordering::SeqCst);
@@ -279,7 +284,7 @@ async fn download() {
     fs::remove_dir_all("temp/").unwrap();
 }
 
-fn deobfuscate() {
+fn backup() {
     if !Path::new("samples/").exists() {
         println!("Cannot find the samples directory, quitting...");
         return;
@@ -287,43 +292,99 @@ fn deobfuscate() {
 
     let samples = fs::read_dir("samples/").unwrap();
     for sample in samples {
-        if !sample.as_ref().unwrap().path().extension().is_none() {
-            println!("{} is already deobfuscated", sample.unwrap().path().file_name().unwrap().to_str().unwrap());
-            continue;
-        }
 
-        let _ = match fs::rename(sample.as_ref().unwrap().path().display().to_string(), format!("{}.exe", sample.as_ref().unwrap().path().display())) {
-            Ok(res) => res,
+        let data: &[u8] = &match fs::read(sample.as_ref().unwrap().path()) {
+            Ok(d) => d,
             Err(_) => {
-                println!("Cannot rename {}, skipping file renaming", sample.unwrap().path().file_name().unwrap().to_str().unwrap());
+                println!("Cannot read {}, skipping file", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
                 continue;
             }
         };
 
-        let data: &mut [u8] = &mut fs::read(format!("{}.exe", sample.as_ref().unwrap().path().display())).unwrap();
-        
-        let bytecount = data.iter_mut().count();
-        let split = data.iter_mut().count() / 25;
-        let mut splitcount = 0;
-        let mut current = 0;
+        let key = GenericArray::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]);
+        let cipher = Aes256GcmSiv::new(&key);
+        let nonce = Nonce::from_slice(b"malwarefiles");
+    
+        let encrypted = cipher.encrypt(nonce, data).unwrap();
+    
+        let mut bytes: &[u8] = &encrypted;
 
-        for byte in data.iter_mut().take(bytecount) {
-                if current % split == 0 {
-                    splitcount += 1;
-                }
-                let cansub = byte.checked_sub(splitcount);
-                if cansub != None {
-                    *byte -= splitcount;
-                }
-                current += 1;
+        let mut out = fs::OpenOptions::new().write(true).open(sample.as_ref().unwrap().path()).unwrap();
+    
+        io::copy(&mut bytes, &mut out).unwrap();
+
+        match fs::rename(sample.as_ref().unwrap().path().display().to_string(), format!("{}/{}.backup", sample.as_ref().unwrap().path().parent().unwrap().to_str().unwrap(), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap())) {
+            Ok(()) => (),
+            Err(_) => {
+                println!("Cannot rename {}, skipping file renaming", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
+                ()
+            }
+        };
+
+        println!("Backupped {}", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
+    }
+
+}
+
+fn restore() {
+    if !Path::new("samples/").exists() {
+        println!("Cannot find the samples directory, quitting...");
+        return;
+    }
+
+    let samples = fs::read_dir("samples/").unwrap();
+    for sample in samples {
+        if sample.as_ref().unwrap().path().extension().unwrap().to_str().unwrap() != "backup" {
+            println!("{} is already restored", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
+            continue;
         }
-        
-        let mut out = fs::OpenOptions::new().write(true).open(format!("{}.exe", sample.as_ref().unwrap().path().display())).unwrap();
 
-        let mut bytes : &[u8] = &data;
+        match fs::rename(sample.as_ref().unwrap().path().display().to_string(), format!("{}/{}.exe", sample.as_ref().unwrap().path().parent().unwrap().to_str().unwrap(), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap())) {
+            Ok(()) => (),
+            Err(_) => {
+                println!("Cannot rename {}, skipping file renaming", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
+                ()
+            }
+        };
+
+        let data: &[u8] = &fs::read(format!("{}/{}.exe", sample.as_ref().unwrap().path().parent().unwrap().to_str().unwrap(), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap())).unwrap();
+
+        let key = GenericArray::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]);
+        let cipher = Aes256GcmSiv::new(&key);
+        let nonce = Nonce::from_slice(b"malwarefiles");
+    
+        let decrypted = match cipher.decrypt(nonce, data) {
+            Ok(d) => d,
+            Err(_) => {
+                println!("Cannot decrypt {}, skipping file", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
+                continue;
+            }
+        };
+        
+        let mut out = fs::OpenOptions::new().write(true).open(format!("{}/{}.exe", sample.as_ref().unwrap().path().parent().unwrap().to_str().unwrap(), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap())).unwrap();
+
+        let mut bytes: &[u8] = &decrypted;
 
         io::copy(&mut bytes, &mut out).unwrap();
 
-        println!("Deobfuscated {}", sample.unwrap().path().file_name().unwrap().to_str().unwrap())
+        println!("Restored {}", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap())
+    }
+}
+
+fn run() {
+    let samples = fs::read_dir("samples/").unwrap();
+    for sample in samples {
+        if sample.as_ref().unwrap().path().extension().unwrap().to_str().unwrap() == "backup" {
+            println!("{} seems to be a backup, try restoring the files first", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
+            continue;
+        }
+
+        match Command::new(sample.as_ref().unwrap().path().display().to_string()).spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                println!("Something went wrong trying to run {}\nError: {}\n", sample.as_ref().unwrap().path().file_name().unwrap().to_str().unwrap(), e);
+                continue;
+            }
+        };
     }
 }
