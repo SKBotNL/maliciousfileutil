@@ -20,7 +20,7 @@ async fn main() {
     }
 
     loop {
-        print!("Do you want to\n(d)ownload\n(de)crypt\n");
+        print!("Do you want to\n(d)ownload\n(de)obfuscate\n");
         io::stdout().flush().unwrap();
         let mut startbuf = String::new();
         io::stdin().read_line(&mut startbuf).expect("Failed to read from stdin");
@@ -35,7 +35,7 @@ async fn main() {
             return;
         }
         else if execute == "de" {
-            decrypt();
+            deobfuscate();
             return;
         }
     }
@@ -279,7 +279,7 @@ async fn download() {
     fs::remove_dir_all("temp/").unwrap();
 }
 
-fn decrypt() {
+fn deobfuscate() {
     if !Path::new("samples/").exists() {
         println!("Cannot find the samples directory, quitting...");
         return;
@@ -288,7 +288,7 @@ fn decrypt() {
     let samples = fs::read_dir("samples/").unwrap();
     for sample in samples {
         if !sample.as_ref().unwrap().path().extension().is_none() {
-            println!("{} is already decrypted", sample.unwrap().path().file_name().unwrap().to_str().unwrap());
+            println!("{} is already deobfuscated", sample.unwrap().path().file_name().unwrap().to_str().unwrap());
             continue;
         }
 
@@ -324,6 +324,6 @@ fn decrypt() {
 
         io::copy(&mut bytes, &mut out).unwrap();
 
-        println!("Decrypted {}", sample.unwrap().path().file_name().unwrap().to_str().unwrap())
+        println!("Deobfuscated {}", sample.unwrap().path().file_name().unwrap().to_str().unwrap())
     }
 }
