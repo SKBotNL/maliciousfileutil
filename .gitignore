@@ -1,6 +1,7 @@
 /target
 /Cargo.lock
-
+/temp
+/samples
 
 # Added by cargo
 #

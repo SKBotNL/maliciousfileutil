@@ -1,4 +1,3 @@
-use age::secrecy::Secret;
 use reqwest;
 use rpassword;
 use tokio::task;
@@ -19,33 +18,39 @@ async fn main() {
     if Path::new("temp/").exists() {
         fs::remove_dir_all("temp/").unwrap();
     }
-    
-    print!("Do you want to\n(d)ownload\n(r)ename & decrypt\n");
-    io::stdout().flush().unwrap();
-    let mut startbuf = String::new();
-    io::stdin().read_line(&mut startbuf).expect("Failed to read from stdin");
-    let execute = startbuf.trim().to_string();
-    if execute != "d" && execute != "r" {
-        println!("Invalid answer, quitting...");
+
+    loop {
+        print!("Do you want to\n(d)ownload\n(de)crypt\n");
+        io::stdout().flush().unwrap();
+        let mut startbuf = String::new();
+        io::stdin().read_line(&mut startbuf).expect("Failed to read from stdin");
+        let execute = startbuf.trim().to_string();
+        if execute != "d" && execute != "de" {
+            println!("Invalid option");
+            continue;
+        }
+
+        if execute == "d" {
+            download().await;
+            return;
+        }
+        else if execute == "de" {
+            decrypt();
+            return;
+        }
     }
 
-    if execute == "d" {
-        download().await;
-    }
-    else if execute == "r" {
-        rename();
-    }
 }
 
 async fn download() {
-    print!("Please paste your Malshare API key: ");
-    io::stdout().flush().unwrap();
-    let malshareapi = rpassword::read_password().unwrap();
-
     let mut map = HashMap::new();
     map.insert("query", "get_file_type");
     map.insert("file_type", "exe");
     map.insert("limit", "1000");
+
+    print!("Please paste your Malshare API key: ");
+    io::stdout().flush().unwrap();
+    let malshareapi = rpassword::read_password().unwrap();
 
     println!("Getting data from Malshare...");
 
@@ -61,17 +66,21 @@ async fn download() {
     let msjson: Value = match serde_json::from_str(&msres) {
         Ok(json) => json,
         Err(_) => {
-            println!("Failed to get data from Malshare: Invalid api key or there is no quota remaining");
-            print!("Do you want to\n(q)uit\n(c)ontinue\n");
-            io::stdout().flush().unwrap();
-            let mut failbuf = String::new();
-            io::stdin().read_line(&mut failbuf).expect("Failed to read from stdin");
-            let answer = failbuf.trim().to_string();
-            if answer != "q" && answer != "c" {
-                println!("Invalid answer, quitting...");
-            }
-            if answer == "q" {
-                return;
+            println!("Failed to get data from Malshare: Invalid API key or there is no quota remaining");
+            loop {
+                print!("Do you want to\n(q)uit\n(c)ontinue\n");
+                io::stdout().flush().unwrap();
+                let mut failbuf = String::new();
+                io::stdin().read_line(&mut failbuf).expect("Failed to read from stdin");
+                let answer = failbuf.trim().to_string();
+                if answer != "q" && answer != "c" {
+                    println!("Invalid answer");
+                    continue;
+                }
+                if answer == "q" {
+                    return;
+                }
+                break;
             }
             serde_json::from_str("[{}]").unwrap()
         }
@@ -193,13 +202,25 @@ async fn download() {
             
             let mut fileout = File::create(format!("samples/sample{}", downloaded.load(Ordering::SeqCst))).unwrap();
 
-            let databytes : &[u8] = &data;
-            let encryptor = age::Encryptor::with_user_passphrase(Secret::new("maliciousfileutil".to_owned()));
-            let mut encrypted = vec![];
-            let mut writer = encryptor.wrap_output(&mut encrypted).unwrap();
-            writer.write_all(databytes).unwrap();
-            writer.finish().unwrap();
-            let mut samplebytes : &[u8] = &encrypted;
+            let databytes : &mut [u8] = &mut data;
+
+            let bytecount = databytes.iter_mut().count();
+            let split = databytes.iter_mut().count() / 25;
+            let mut splitcount = 0;
+            let mut current = 0;
+
+            for byte in databytes.iter_mut().take(bytecount) {
+                    if current % split == 0 {
+                        splitcount += 1;
+                    }
+                    let canadd = byte.checked_add(splitcount);
+                    if canadd != None {
+                        *byte += splitcount;
+                    }
+                    current += 1;
+            }
+
+            let mut samplebytes : &[u8] = databytes;
 
             io::copy(&mut samplebytes, &mut fileout).unwrap();
     
@@ -224,15 +245,28 @@ async fn download() {
                 .await
                 .unwrap();
 
-            let mut out = File::create(format!("samples/sample{}", downloaded_clone.load(Ordering::SeqCst))).unwrap();
+            let mut result : Vec<u8> = res.to_vec();
+            let resbytes : &mut [u8] = &mut result;
 
-            let resbytes : &[u8] = &res;
-            let encryptor = age::Encryptor::with_user_passphrase(Secret::new("maliciousfileutil".to_owned()));
-            let mut encrypted = vec![];
-            let mut writer = encryptor.wrap_output(&mut encrypted).unwrap();
-            writer.write_all(resbytes).unwrap();
-            writer.finish().unwrap();
-            let mut bytes : &[u8] = &encrypted;
+            let bytecount = resbytes.iter_mut().count();
+            let split = resbytes.iter_mut().count() / 25;
+            let mut splitcount = 0;
+            let mut current = 0;
+
+            for byte in resbytes.iter_mut().take(bytecount) {
+                    if current % split == 0 {
+                        splitcount += 1;
+                    }
+                    let canadd = byte.checked_add(splitcount);
+                    if canadd != None {
+                        *byte += splitcount;
+                    }
+                    current += 1;
+            }
+        
+            let mut bytes : &[u8] = resbytes;
+        
+            let mut out = File::create(format!("samples/sample{}", downloaded_clone.load(Ordering::SeqCst))).unwrap();
 
             io::copy(&mut bytes, &mut out).unwrap();
 
@@ -245,7 +279,7 @@ async fn download() {
     fs::remove_dir_all("temp/").unwrap();
 }
 
-fn rename() {
+fn decrypt() {
     if !Path::new("samples/").exists() {
         println!("Cannot find the samples directory, quitting...");
         return;
@@ -254,42 +288,42 @@ fn rename() {
     let samples = fs::read_dir("samples/").unwrap();
     for sample in samples {
         if !sample.as_ref().unwrap().path().extension().is_none() {
-            println!("{} is already renamed and decrypted", sample.unwrap().path().file_name().unwrap().to_str().unwrap());
+            println!("{} is already decrypted", sample.unwrap().path().file_name().unwrap().to_str().unwrap());
             continue;
         }
-        let data = fs::read(sample.as_ref().unwrap().path()).unwrap();
-        
-        let decryptor = match age::Decryptor::new(&data[..]) {
-            Ok(age::Decryptor::Passphrase(d)) => d,
-            _ => {
-                println!("Can't decrypt {}, skipping file", sample.unwrap().path().file_name().unwrap().to_str().unwrap());
-                continue;
-            }
-        };
-
-        let mut decrypted = vec![];
-        let mut reader = decryptor.decrypt(&Secret::new("maliciousfileutil".to_owned()), None).unwrap();
-        let _ = match reader.read_to_end(&mut decrypted) {
-            Ok(o) => o,
-            Err(_) => {
-                println!("Can't decrypt {}, skipping file", sample.unwrap().path().file_name().unwrap().to_str().unwrap());
-                continue;
-            }
-        };
-        
-        let mut out = fs::OpenOptions::new().write(true).open(sample.as_ref().unwrap().path().display().to_string()).unwrap();
-
-        let mut bytes : &[u8] = &decrypted;
-
-        io::copy(&mut bytes, &mut out).unwrap();
 
         let _ = match fs::rename(sample.as_ref().unwrap().path().display().to_string(), format!("{}.exe", sample.as_ref().unwrap().path().display())) {
             Ok(res) => res,
             Err(_) => {
-                println!("Cannot rename {}, skipping file", sample.unwrap().path().file_name().unwrap().to_str().unwrap());
+                println!("Cannot rename {}, skipping file renaming", sample.unwrap().path().file_name().unwrap().to_str().unwrap());
                 continue;
             }
         };
-        println!("Renamed {}", sample.unwrap().path().file_name().unwrap().to_str().unwrap())
+
+        let data: &mut [u8] = &mut fs::read(format!("{}.exe", sample.as_ref().unwrap().path().display())).unwrap();
+        
+        let bytecount = data.iter_mut().count();
+        let split = data.iter_mut().count() / 25;
+        let mut splitcount = 0;
+        let mut current = 0;
+
+        for byte in data.iter_mut().take(bytecount) {
+                if current % split == 0 {
+                    splitcount += 1;
+                }
+                let cansub = byte.checked_sub(splitcount);
+                if cansub != None {
+                    *byte -= splitcount;
+                }
+                current += 1;
+        }
+        
+        let mut out = fs::OpenOptions::new().write(true).open(format!("{}.exe", sample.as_ref().unwrap().path().display())).unwrap();
+
+        let mut bytes : &[u8] = &data;
+
+        io::copy(&mut bytes, &mut out).unwrap();
+
+        println!("Decrypted {}", sample.unwrap().path().file_name().unwrap().to_str().unwrap())
     }
 }

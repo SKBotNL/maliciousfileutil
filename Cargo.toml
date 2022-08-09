@@ -11,4 +11,3 @@ serde_json = { version = "1.0.82" }
 zip = { version = "0.6.2" }
 futures = { version = "0.3.21" }
 rpassword = { version = "7.0" }
-age = { version = "0.8.1" }
