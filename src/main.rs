@@ -4,12 +4,15 @@ use aes_gcm_siv::Nonce;
 use aes_gcm_siv::aead::Aead;
 use aes_gcm_siv::aead::generic_array::GenericArray;
 use reqwest;
+use reqwest::StatusCode;
 use rpassword;
 use tokio::task;
 use std::collections::HashMap;
 use std::path::Path;
+use std::process;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering;
 use serde_json::Value;
@@ -26,7 +29,7 @@ async fn main() {
     }
 
     loop {
-        print!("1. download\n2. backup\n3. restore\n4. run\nType the number of the action you want to run: ");
+        print!("1. Download\n2. Backup\n3. Restore\n4. Run\nType the number of the action you want to run: ");
         io::stdout().flush().unwrap();
         let mut startbuf = String::new();
         io::stdin().read_line(&mut startbuf).expect("Failed to read from stdin");
@@ -82,7 +85,7 @@ async fn download() {
         Err(_) => {
             println!("\nFailed to get data from Malshare: Invalid API key or there is no quota remaining");
             loop {
-                print!("Do you want to\n1. continue\n2. quit\nType the number of the action you want to run: ");
+                print!("Do you want to\n1. Continue\n2. Quit\nType the number of the action you want to run: ");
                 io::stdout().flush().unwrap();
                 let mut failbuf = String::new();
                 io::stdin().read_line(&mut failbuf).expect("Failed to read from stdin");
@@ -126,7 +129,7 @@ async fn download() {
         if dirstat.count() != 0 {
             println!("\nThe samples directory already exists");
             loop {
-                print!("Do you want to\n1. delete\n2. backup\nType the number of the action you want to run: ");
+                print!("Do you want to\n1. Delete\n2. Backup\nType the number of the action you want to run: ");
                 io::stdout().flush().unwrap();
                 let mut samplebuf = String::new();
                 io::stdin().read_line(&mut samplebuf).expect("Failed to read from stdin");
@@ -143,13 +146,13 @@ async fn download() {
                         if backupstat.count() != 0 {
                             println!("\nThe backup directory already exists");
                             loop {
-                                print!("Do you want to\n1. delete\n2. quit\nType the number of the action you want to run: ");
+                                print!("Do you want to\n1. Delete\n2. Quit\nType the number of the action you want to run: ");
                                 io::stdout().flush().unwrap();
                                 let mut backupbuf = String::new();
                                 io::stdin().read_line(&mut backupbuf).expect("Failed to read from stdin");
                                 let backupanswer = backupbuf.trim().to_string();
                                 if backupanswer != "1" && backupanswer != "2" {
-                                    println!("Invalid option\n")
+                                    println!("Invalid option\n");
                                 }
                                 if backupanswer == "1" {
                                     println!("Deleting the backup directory...");
@@ -196,6 +199,9 @@ async fn download() {
 
     let downloaded = Arc::new(AtomicIsize::new(1));
     let downloaded_clone = downloaded.clone();
+
+    let pause = Arc::new(AtomicBool::new(false));
+    let pause_clone = pause.clone();
 
     let mut handles = vec![];
 
@@ -248,6 +254,14 @@ async fn download() {
 
             io::copy(&mut databytes, &mut fileout).unwrap();
     
+            if pause.load(Ordering::SeqCst) == true {
+                loop {
+                    if pause.load(Ordering::SeqCst) == false {
+                        break;
+                    }
+                }
+            }
+
             println!("Downloaded file {}/{} from Malwarebazaar", downloaded.load(Ordering::SeqCst), count.load(Ordering::SeqCst));
             downloaded.fetch_add(1, Ordering::SeqCst);
         }
@@ -264,12 +278,32 @@ async fn download() {
                 .get(format!("https://malshare.com/api.php?api_key={}&action=getfile&hash={}", malshareapi, hash))
                 .send()
                 .await
-                .unwrap()
-                .bytes()
-                .await
                 .unwrap();
+            
+            if res.status() == StatusCode::TOO_MANY_REQUESTS {
+                pause_clone.store(true, Ordering::SeqCst);
+                println!("\nError while trying to get a file from Malshare, most likely there is no more quota remaining");
+                loop {
+                    print!("Do you want to\n1. Continue without Malshare\n2. Quit\nType the number of the action you want to run: ");
+                    io::stdout().flush().unwrap();
+                    let mut errbuf = String::new();
+                    io::stdin().read_line(&mut errbuf).expect("Failed to read from stdin");
+                    let erranswer = errbuf.trim().to_string();
+                    if erranswer != "1" && erranswer != "2" {
+                        println!("Invalid option\n");
+                    }
+                    if erranswer == "1" {
+                        count_clone.fetch_sub(msdata.len().try_into().unwrap(), Ordering::SeqCst);
+                        pause_clone.store(false, Ordering::SeqCst);
+                        return;
+                    }
+                    if erranswer == "2" {
+                        process::exit(0);
+                    }
+                }
+            }
 
-            let mut resbytes: &[u8] = &res;
+            let mut resbytes: &[u8] = &res.bytes().await.unwrap();
         
             let mut out = File::create(format!("samples/sample{}.exe", downloaded_clone.load(Ordering::SeqCst))).unwrap();
 
