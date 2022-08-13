@@ -268,6 +268,7 @@ async fn download() {
     }));
 
     handles.push(task::spawn(async move {
+        let mut localapi = malshareapi.to_string();
         for i in 0..msdata.len() {
             if msdata[i]["sha256"].as_str().is_none() {
                 return;
@@ -275,7 +276,7 @@ async fn download() {
             let hash = &msdata[i]["sha256"].as_str().unwrap();
 
             let res = reqwest::Client::new()
-                .get(format!("https://malshare.com/api.php?api_key={}&action=getfile&hash={}", malshareapi, hash))
+                .get(format!("https://malshare.com/api.php?api_key={}&action=getfile&hash={}", localapi, hash))
                 .send()
                 .await
                 .unwrap();
@@ -284,12 +285,12 @@ async fn download() {
                 pause_clone.store(true, Ordering::SeqCst);
                 println!("\nError while trying to get a file from Malshare, most likely there is no more quota remaining");
                 loop {
-                    print!("Do you want to\n1. Continue without Malshare\n2. Quit\nType the number of the action you want to run: ");
+                    print!("Do you want to\n1. Continue without Malshare\n2. Change API key\n3. Quit\nType the number of the action you want to run: ");
                     io::stdout().flush().unwrap();
                     let mut errbuf = String::new();
                     io::stdin().read_line(&mut errbuf).expect("Failed to read from stdin");
                     let erranswer = errbuf.trim().to_string();
-                    if erranswer != "1" && erranswer != "2" {
+                    if erranswer != "1" && erranswer != "2" && erranswer != "3" {
                         println!("Invalid option\n");
                     }
                     if erranswer == "1" {
@@ -298,13 +299,43 @@ async fn download() {
                         return;
                     }
                     if erranswer == "2" {
+                        loop {
+                            print!("\nPlease paste your Malshare API key: ");
+                            io::stdout().flush().unwrap();
+                            let apianswer = rpassword::read_password().unwrap();
+
+                            let checkres = reqwest::Client::new()
+                                .get(format!("https://malshare.com/api.php?api_key={}&action=getlimit", apianswer))
+                                .send()
+                                .await
+                                .unwrap();
+
+                            if checkres.status() == StatusCode::UNAUTHORIZED {
+                                println!("Invalid API key");
+                                continue;
+                            }
+
+                            let checktext = checkres.text().await.unwrap();
+                            let checkjson: Value = serde_json::from_str(&checktext).unwrap();
+                            let remaining = checkjson.get("REMAINING").unwrap();
+                            if remaining == "0" {
+                                println!("No quota remaining")
+                            }
+
+                            localapi = apianswer;
+                            break;
+                        }
+                        pause_clone.store(false, Ordering::SeqCst);
+                        break;
+                    }
+                    if erranswer == "3" {
                         process::exit(0);
                     }
                 }
             }
 
             let mut resbytes: &[u8] = &res.bytes().await.unwrap();
-        
+
             let mut out = File::create(format!("samples/sample{}.exe", downloaded_clone.load(Ordering::SeqCst))).unwrap();
 
             io::copy(&mut resbytes, &mut out).unwrap();
