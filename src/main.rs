@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the GPLv3. See LICENSE in the project root for license information.
+
 use aes_gcm_siv::Aes256GcmSiv;
 use aes_gcm_siv::KeyInit;
 use aes_gcm_siv::Nonce;
