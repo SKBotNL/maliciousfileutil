@@ -3,6 +3,8 @@ use aes_gcm_siv::KeyInit;
 use aes_gcm_siv::Nonce;
 use aes_gcm_siv::aead::Aead;
 use aes_gcm_siv::aead::generic_array::GenericArray;
+use indicatif::ProgressBar;
+use indicatif::ProgressStyle;
 use reqwest;
 use reqwest::StatusCode;
 use rpassword;
@@ -21,6 +23,7 @@ use std::io;
 use std::fs;
 use std::io::Read;
 use std::io::Write;
+use console::Style;
 
 #[tokio::main]
 async fn main() {
@@ -44,11 +47,11 @@ async fn main() {
             return;
         }
         else if execute == "2" {
-            backup();
+            backup().await;
             return;
         }
         else if execute == "3" {
-            restore();
+            restore().await;
             return;
         }
         else if execute == "4" {
@@ -349,91 +352,144 @@ async fn download() {
     fs::remove_dir_all("temp/").unwrap();
 }
 
-fn backup() {
+async fn backup() {
     if !Path::new("samples/").exists() {
         println!("Cannot find the samples directory, quitting...");
         return;
     }
 
     let samples = fs::read_dir("samples/").unwrap();
+    let samplescount = fs::read_dir("samples/").unwrap().count();
+
+    let mut handles = vec![];
+
+    let pb = ProgressBar::new(samplescount as u64);
+    pb.set_style(ProgressStyle::with_template(
+        "{prefix:>10.cyan.bold} [{bar:57}] {pos}/{len}"
+    )
+    .unwrap()
+    .progress_chars("=> "));
+    pb.set_prefix("Backupping");
+
     for sample in samples {
+        let pb_clone = pb.clone();
+        handles.push(task::spawn(async move {
+            let sample_copy = sample.as_ref().unwrap();
 
-        let data: &[u8] = &match fs::read(sample.as_ref().unwrap().path()) {
-            Ok(d) => d,
-            Err(_) => {
-                println!("Cannot read {}, skipping file", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
-                continue;
+            let green_bold = Style::new().green().bold();
+            let red_bold = Style::new().red().bold();
+
+            if sample_copy.path().extension().unwrap().to_str().unwrap() != "exe" {
+                pb_clone.println(format!("{:>10} {} is already backupped", green_bold.apply_to("Backupped"), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap()));
+                pb_clone.inc(1);
+                return;
             }
-        };
 
-        let key = GenericArray::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]);
-        let cipher = Aes256GcmSiv::new(&key);
-        let nonce = Nonce::from_slice(b"malwarefiles");
+            let data: &[u8] = &match fs::read(sample_copy.path()) {
+                Ok(d) => d,
+                Err(_) => {
+                    pb_clone.println(format!("{:>5} Cannot read {}, skipping file", red_bold.apply_to("Error"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
+                    pb_clone.inc(1);
+                    return;
+                }
+            };
     
-        let encrypted = cipher.encrypt(nonce, data).unwrap();
+            let key = GenericArray::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]);
+            let cipher = Aes256GcmSiv::new(&key);
+            let nonce = Nonce::from_slice(b"malwarefiles");
+        
+            let encrypted = cipher.encrypt(nonce, data).unwrap();
+        
+            let mut bytes: &[u8] = &encrypted;
     
-        let mut bytes: &[u8] = &encrypted;
-
-        let mut out = fs::OpenOptions::new().write(true).open(sample.as_ref().unwrap().path()).unwrap();
+            let mut out = fs::OpenOptions::new().write(true).open(sample_copy.path()).unwrap();
+        
+            io::copy(&mut bytes, &mut out).unwrap();
     
-        io::copy(&mut bytes, &mut out).unwrap();
-
-        match fs::rename(sample.as_ref().unwrap().path().display().to_string(), format!("{}/{}.backup", sample.as_ref().unwrap().path().parent().unwrap().to_str().unwrap(), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap())) {
-            Ok(()) => (),
-            Err(_) => {
-                println!("Cannot rename {}, skipping file renaming", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
-                ()
-            }
-        };
-
-        println!("Backupped {}", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
+            match fs::rename(sample_copy.path().display().to_string(), format!("{}/{}.backup", sample_copy.path().parent().unwrap().to_str().unwrap(), sample_copy.path().file_stem().unwrap().to_str().unwrap())) {
+                Ok(()) => (),
+                Err(_) => {
+                    pb_clone.println(format!("{:>5}, Cannot rename {}, skipping file", red_bold.apply_to("Error"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
+                    pb_clone.inc(1);
+                    return;
+                }
+            };
+    
+            pb_clone.println(format!("{:>10} {}", green_bold.apply_to("Backupped"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
+            pb_clone.inc(1);
+        }));
     }
-
+    futures::future::join_all(handles).await;
 }
 
-fn restore() {
+async fn restore() {
     if !Path::new("samples/").exists() {
         println!("Cannot find the samples directory, quitting...");
         return;
     }
 
     let samples = fs::read_dir("samples/").unwrap();
+    let samplescount = fs::read_dir("samples/").unwrap().count();
+
+    let mut handles = vec![];
+
+    let pb = ProgressBar::new(samplescount as u64);
+    pb.set_style(ProgressStyle::with_template(
+        "{prefix:>9.cyan.bold} [{bar:57}] {pos}/{len}"
+    )
+    .unwrap()
+    .progress_chars("=> "));
+    pb.set_prefix("Restoring");
+
     for sample in samples {
-        if sample.as_ref().unwrap().path().extension().unwrap().to_str().unwrap() != "backup" {
-            println!("{} is already restored", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
-            continue;
-        }
+        let pb_clone = pb.clone();
+        handles.push(task::spawn(async move {
+            let sample_copy = sample.as_ref().unwrap();
 
-        match fs::rename(sample.as_ref().unwrap().path().display().to_string(), format!("{}/{}.exe", sample.as_ref().unwrap().path().parent().unwrap().to_str().unwrap(), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap())) {
-            Ok(()) => (),
-            Err(_) => {
-                println!("Cannot rename {}, skipping file renaming", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
-                ()
+            let green_bold = Style::new().green().bold();
+            let red_bold = Style::new().red().bold();
+
+            if sample_copy.path().extension().unwrap().to_str().unwrap() != "backup" {
+                pb_clone.println(format!("{:>8} {} is already restored", green_bold.apply_to("Restored"), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap()));
+                pb_clone.inc(1);
+                return;
             }
-        };
 
-        let data: &[u8] = &fs::read(format!("{}/{}.exe", sample.as_ref().unwrap().path().parent().unwrap().to_str().unwrap(), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap())).unwrap();
+            match fs::rename(sample_copy.path().display().to_string(), format!("{}/{}.exe", sample_copy.path().parent().unwrap().to_str().unwrap(), sample_copy.path().file_stem().unwrap().to_str().unwrap())) {
+                Ok(()) => (),
+                Err(_) => {
+                    pb_clone.println(format!("{:>5} Cannot rename {}, skipping file", red_bold.apply_to("Error"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
+                    pb_clone.inc(1);
+                    return;
+                }
+            };
 
-        let key = GenericArray::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]);
-        let cipher = Aes256GcmSiv::new(&key);
-        let nonce = Nonce::from_slice(b"malwarefiles");
-    
-        let decrypted = match cipher.decrypt(nonce, data) {
-            Ok(d) => d,
-            Err(_) => {
-                println!("Cannot decrypt {}, skipping file", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap());
-                continue;
-            }
-        };
+            let data: &[u8] = &fs::read(format!("{}/{}.exe", sample_copy.path().parent().unwrap().to_str().unwrap(), sample_copy.path().file_stem().unwrap().to_str().unwrap())).unwrap();
+
+            let key = GenericArray::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]);
+            let cipher = Aes256GcmSiv::new(&key);
+            let nonce = Nonce::from_slice(b"malwarefiles");
         
-        let mut out = fs::OpenOptions::new().write(true).open(format!("{}/{}.exe", sample.as_ref().unwrap().path().parent().unwrap().to_str().unwrap(), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap())).unwrap();
+            let decrypted = match cipher.decrypt(nonce, data) {
+                Ok(d) => d,
+                Err(_) => {
+                    pb_clone.println(format!("{:>5} Cannot decrypt {}, skipping file", red_bold.apply_to("Error"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
+                    pb_clone.inc(1);
+                    return;
+                }
+            };
+            
+            let mut out = fs::OpenOptions::new().write(true).open(format!("{}/{}.exe", sample_copy.path().parent().unwrap().to_str().unwrap(), sample_copy.path().file_stem().unwrap().to_str().unwrap())).unwrap();
 
-        let mut bytes: &[u8] = &decrypted;
+            let mut bytes: &[u8] = &decrypted;
 
-        io::copy(&mut bytes, &mut out).unwrap();
+            io::copy(&mut bytes, &mut out).unwrap();
 
-        println!("Restored {}", sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap())
+            pb_clone.println(format!("{:>8} {}", green_bold.apply_to("Restored"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
+            pb_clone.inc(1);
+        }));
     }
+    futures::future::join_all(handles).await;
 }
 
 fn run() {
