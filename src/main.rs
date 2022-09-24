@@ -62,7 +62,6 @@ async fn main() {
             return
         }
     }
-
 }
 
 async fn download() {
@@ -209,10 +208,24 @@ async fn download() {
     let pause = Arc::new(AtomicBool::new(false));
     let pause_clone = pause.clone();
 
+    let pb = ProgressBar::new((mbdata.len() + msdata.len()) as u64);
+    // let pb = ProgressBar::new((msdata.len()) as u64);
+    pb.set_style(ProgressStyle::with_template(
+        "{prefix:>9.cyan.bold} [{bar:57}] {pos}/{len}"
+    )
+    .unwrap()
+    .progress_chars("=> "));
+    pb.set_prefix("Downloading");
+
+    let pb_clone = pb.clone();
+
     let mut handles = vec![];
 
     handles.push(task::spawn(async move {
         for i in 0..mbdata.len() {
+            let red_bold = Style::new().red().bold();
+            let green_bold = Style::new().green().bold();
+
             let hash = &mbdata[i]["sha256_hash"];
     
             let mut map = HashMap::new();
@@ -240,8 +253,8 @@ async fn download() {
             let mut archive = match zip::ZipArchive::new(zip) {
                 Ok(archive) => archive,
                 Err(_e) => {
-                    println!("Can't load zip file, skipping file");
-                    count.fetch_add(-1, Ordering::SeqCst);
+                    pb.println(format!("{} can't load zip file, skipping file", red_bold.apply_to("Error")));
+                    pb.set_length(pb.length().unwrap() - 1);                   
                     continue;
                 }
             };   
@@ -267,13 +280,21 @@ async fn download() {
                     }
                 }
             }
-
-            println!("Downloaded file {}/{} from Malwarebazaar", downloaded.load(Ordering::SeqCst), count.load(Ordering::SeqCst));
+        
+            pb.println(format!("{} sample{} from Malwarebazaar", green_bold.apply_to("Downloaded"), downloaded.load(Ordering::SeqCst)));
+            pb.inc(1);
             downloaded.fetch_add(1, Ordering::SeqCst);
+        }
+        if Path::new("temp/").exists() {
+            fs::remove_dir_all("temp/").unwrap();
         }
     }));
 
     handles.push(task::spawn(async move {
+        let green_bold = Style::new().green().bold();
+
+        let mut skip = false;
+
         let mut localapi = malshareapi.to_string();
         for i in 0..msdata.len() {
             if msdata[i]["sha256"].as_str().is_none() {
@@ -281,12 +302,12 @@ async fn download() {
             }
             let hash = &msdata[i]["sha256"].as_str().unwrap();
 
-            let res = reqwest::Client::new()
+            let mut res = reqwest::Client::new()
                 .get(format!("https://malshare.com/api.php?api_key={}&action=getfile&hash={}", localapi, hash))
                 .send()
                 .await
                 .unwrap();
-            
+
             if res.status() == StatusCode::TOO_MANY_REQUESTS {
                 pause_clone.store(true, Ordering::SeqCst);
                 println!("\nError while trying to get a file from Malshare, most likely there is no more quota remaining");
@@ -332,12 +353,24 @@ async fn download() {
                             break;
                         }
                         pause_clone.store(false, Ordering::SeqCst);
+                        skip = true;
                         break;
                     }
                     if erranswer == "3" {
                         process::exit(0);
                     }
                 }
+                pb_clone.tick();
+            }
+
+            if skip {
+                res = reqwest::Client::new()
+                .get(format!("https://malshare.com/api.php?api_key={}&action=getfile&hash={}", localapi, hash))
+                .send()
+                .await
+                .unwrap();
+
+                skip = false;
             }
 
             let mut resbytes: &[u8] = &res.bytes().await.unwrap();
@@ -346,7 +379,8 @@ async fn download() {
 
             io::copy(&mut resbytes, &mut out).unwrap();
 
-            println!("Downloaded file {}/{} from Malshare", downloaded_clone.load(Ordering::SeqCst), count_clone.load(Ordering::SeqCst));
+            pb_clone.println(format!("{} sample{} from Malshare", green_bold.apply_to("Downloaded"), downloaded_clone.load(Ordering::SeqCst)));
+            pb_clone.inc(1);
             downloaded_clone.fetch_add(1, Ordering::SeqCst);
         }
     }));
@@ -383,7 +417,7 @@ async fn backup() {
             let red_bold = Style::new().red().bold();
 
             if sample_copy.path().extension().unwrap().to_str().unwrap() != "exe" {
-                pb_clone.println(format!("{:>10} {} is already backupped", green_bold.apply_to("Backupped"), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap()));
+                pb_clone.println(format!("{} {} is already backupped", green_bold.apply_to("Backupped"), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap()));
                 pb_clone.inc(1);
                 return;
             }
@@ -391,7 +425,7 @@ async fn backup() {
             let data: &[u8] = &match fs::read(sample_copy.path()) {
                 Ok(d) => d,
                 Err(_) => {
-                    pb_clone.println(format!("{:>5} Cannot read {}, skipping file", red_bold.apply_to("Error"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
+                    pb_clone.println(format!("{} cannot read {}, skipping file", red_bold.apply_to("Error"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
                     pb_clone.inc(1);
                     return;
                 }
@@ -412,13 +446,13 @@ async fn backup() {
             match fs::rename(sample_copy.path().display().to_string(), format!("{}/{}.backup", sample_copy.path().parent().unwrap().to_str().unwrap(), sample_copy.path().file_stem().unwrap().to_str().unwrap())) {
                 Ok(()) => (),
                 Err(_) => {
-                    pb_clone.println(format!("{:>5}, Cannot rename {}, skipping file", red_bold.apply_to("Error"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
+                    pb_clone.println(format!("{} cannot rename {}, skipping file", red_bold.apply_to("Error"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
                     pb_clone.inc(1);
                     return;
                 }
             };
     
-            pb_clone.println(format!("{:>10} {}", green_bold.apply_to("Backupped"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
+            pb_clone.println(format!("{} {}", green_bold.apply_to("Backupped"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
             pb_clone.inc(1);
         }));
     }
@@ -453,7 +487,7 @@ async fn restore() {
             let red_bold = Style::new().red().bold();
 
             if sample_copy.path().extension().unwrap().to_str().unwrap() != "backup" {
-                pb_clone.println(format!("{:>8} {} is already restored", green_bold.apply_to("Restored"), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap()));
+                pb_clone.println(format!("{} {} is already restored", green_bold.apply_to("Restored"), sample.as_ref().unwrap().path().file_stem().unwrap().to_str().unwrap()));
                 pb_clone.inc(1);
                 return;
             }
@@ -461,7 +495,7 @@ async fn restore() {
             match fs::rename(sample_copy.path().display().to_string(), format!("{}/{}.exe", sample_copy.path().parent().unwrap().to_str().unwrap(), sample_copy.path().file_stem().unwrap().to_str().unwrap())) {
                 Ok(()) => (),
                 Err(_) => {
-                    pb_clone.println(format!("{:>5} Cannot rename {}, skipping file", red_bold.apply_to("Error"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
+                    pb_clone.println(format!("{} cannot rename {}, skipping file", red_bold.apply_to("Error"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
                     pb_clone.inc(1);
                     return;
                 }
@@ -476,7 +510,7 @@ async fn restore() {
             let decrypted = match cipher.decrypt(nonce, data) {
                 Ok(d) => d,
                 Err(_) => {
-                    pb_clone.println(format!("{:>5} Cannot decrypt {}, skipping file", red_bold.apply_to("Error"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
+                    pb_clone.println(format!("{} cannot decrypt {}, skipping file", red_bold.apply_to("Error"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
                     pb_clone.inc(1);
                     return;
                 }
@@ -488,7 +522,7 @@ async fn restore() {
 
             io::copy(&mut bytes, &mut out).unwrap();
 
-            pb_clone.println(format!("{:>8} {}", green_bold.apply_to("Restored"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
+            pb_clone.println(format!("{} {}", green_bold.apply_to("Restored"), sample_copy.path().file_stem().unwrap().to_str().unwrap()));
             pb_clone.inc(1);
         }));
     }
