@@ -209,7 +209,6 @@ async fn download() {
     let pause_clone = pause.clone();
 
     let pb = ProgressBar::new((mbdata.len() + msdata.len()) as u64);
-    // let pb = ProgressBar::new((msdata.len()) as u64);
     pb.set_style(ProgressStyle::with_template(
         "{prefix:>9.cyan.bold} [{bar:57}] {pos}/{len}"
     )
