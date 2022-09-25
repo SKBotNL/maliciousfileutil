@@ -221,7 +221,7 @@ async fn download() {
 
     let pb = ProgressBar::new((mbdata.len() + msdata.len()) as u64);
     pb.set_style(ProgressStyle::with_template(
-        "{prefix:>9.cyan.bold} [{bar:57}] {pos}/{len}"
+        "{prefix.cyan.bold} [{bar:57}] {pos}/{len}"
     )
     .unwrap()
     .progress_chars("=> "));
@@ -412,7 +412,7 @@ async fn backup() {
 
     let pb = ProgressBar::new(samplescount as u64);
     pb.set_style(ProgressStyle::with_template(
-        "{prefix:>10.cyan.bold} [{bar:57}] {pos}/{len}"
+        "{prefix.cyan.bold} [{bar:57}] {pos}/{len}"
     )
     .unwrap()
     .progress_chars("=> "));
@@ -482,7 +482,7 @@ async fn restore() {
 
     let pb = ProgressBar::new(samplescount as u64);
     pb.set_style(ProgressStyle::with_template(
-        "{prefix:>9.cyan.bold} [{bar:57}] {pos}/{len}"
+        "{prefix.cyan.bold} [{bar:57}] {pos}/{len}"
     )
     .unwrap()
     .progress_chars("=> "));
