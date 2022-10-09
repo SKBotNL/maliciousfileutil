@@ -115,7 +115,7 @@ async fn download() {
                 }
                 break;
             }
-            serde_json::from_str("[{}]").unwrap()
+            serde_json::from_str("[]").unwrap()
         }
     };
 
@@ -134,10 +134,27 @@ async fn download() {
         .unwrap();
     
     println!("Done");
-        
-    let mbjson: Value = serde_json::from_str(&mbres).unwrap();
 
+    println!("Filtering data from Malwarebazaar...");
+
+    let mbjson: Value = serde_json::from_str(&mbres).unwrap();
     let mbdata = mbjson.get("data").unwrap().as_array().unwrap().clone();
+
+    let mut signatures: Vec<String> = Vec::new();
+    let mut mblist: Vec<String> = Vec::new();
+
+    for i in 0..mbdata.len() {
+        let hash = mbdata[i]["sha256_hash"].to_string().replace("\"", "");
+        let signature = mbdata[i]["signature"].to_string();
+        if signatures.contains(&signature) {
+            continue;
+        }
+        signatures.push(signature);
+        mblist.push(hash);
+    }
+
+    println!("Done");
+
     let msdata = msjson.as_array().unwrap().clone();
 
     if Path::new("samples/").exists() {
@@ -210,7 +227,7 @@ async fn download() {
     fs::create_dir_all("temp/").unwrap();
     fs::create_dir_all("samples/").unwrap(); 
 
-    let count = Arc::new(AtomicIsize::new((mbdata.len() + msdata.len()).try_into().unwrap()));
+    let count = Arc::new(AtomicIsize::new((mblist.len() + msdata.len()).try_into().unwrap()));
     let count_clone = count.clone();
 
     let downloaded = Arc::new(AtomicIsize::new(1));
@@ -219,7 +236,7 @@ async fn download() {
     let pause = Arc::new(AtomicBool::new(false));
     let pause_clone = pause.clone();
 
-    let pb = ProgressBar::new((mbdata.len() + msdata.len()) as u64);
+    let pb = ProgressBar::new((mblist.len() + msdata.len()) as u64);
     pb.set_style(ProgressStyle::with_template(
         "{prefix.cyan.bold} [{bar:57}] {pos}/{len}"
     )
@@ -232,15 +249,15 @@ async fn download() {
     let mut handles = vec![];
 
     handles.push(task::spawn(async move {
-        for i in 0..mbdata.len() {
+        for i in 0..mblist.len() {
             let red_bold = Style::new().red().bold();
             let green_bold = Style::new().green().bold();
 
-            let hash = &mbdata[i]["sha256_hash"];
+            let hash = &mblist[i];
     
             let mut map = HashMap::new();
             map.insert("query", "get_file");
-            map.insert("sha256_hash", hash.as_str().unwrap());
+            map.insert("sha256_hash", hash);
     
             let res = reqwest::Client::new()
                 .post("https://mb-api.abuse.ch/api/v1/")
@@ -303,7 +320,7 @@ async fn download() {
     handles.push(task::spawn(async move {
         let green_bold = Style::new().green().bold();
 
-        let mut skip = false;
+        let mut retry = false;
 
         let mut localapi = malshareapi.to_string();
         for i in 0..msdata.len() {
@@ -363,7 +380,7 @@ async fn download() {
                             break;
                         }
                         pause_clone.store(false, Ordering::SeqCst);
-                        skip = true;
+                        retry = true;
                         break;
                     }
                     if erranswer == "3" {
@@ -373,14 +390,14 @@ async fn download() {
                 pb_clone.tick();
             }
 
-            if skip {
+            if retry {
                 res = reqwest::Client::new()
                 .get(format!("https://malshare.com/api.php?api_key={}&action=getfile&hash={}", localapi, hash))
                 .send()
                 .await
                 .unwrap();
 
-                skip = false;
+                retry = false;
             }
 
             let mut resbytes: &[u8] = &res.bytes().await.unwrap();
