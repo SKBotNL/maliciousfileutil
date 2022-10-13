@@ -297,7 +297,7 @@ async fn download() {
                 .text()
                 .to_string();
 
-            if url.to_string().ends_with("exe") {
+            if url.ends_with("exe") {
                 vxurls.push(format!(
                     "http://{}",
                     url
