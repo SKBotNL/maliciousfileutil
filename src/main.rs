@@ -300,15 +300,7 @@ async fn download() {
             if url.to_string().ends_with("exe") {
                 vxurls.push(format!(
                     "http://{}",
-                    athing
-                        .children()
-                        .get(1)
-                        .unwrap()
-                        .children()
-                        .get(2)
-                        .unwrap()
-                        .text()
-                        .to_string()
+                    url
                 ));
             }
         });
