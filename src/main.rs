@@ -232,7 +232,7 @@ async fn download() {
     if enabledsources.contains(&"vxvault") {
         let vxcount;
         loop {
-            print!("How many samples do you want to download from VX Vault? (I don't recommend more than 1000): ");
+            print!("How many samples do you want to query from VX Vault? (I don't recommend more than 1000): ");
             stdout().flush().unwrap();
             let mut vxbuf = String::new();
             stdin()
