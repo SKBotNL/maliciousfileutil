@@ -21,7 +21,9 @@ use aes_gcm_siv::Nonce;
 use console::Style;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
+use nipper::Document;
 use reqwest;
+use reqwest::header::SET_COOKIE;
 use reqwest::StatusCode;
 use reqwest::Url;
 use rpassword;
@@ -116,7 +118,10 @@ async fn download() {
     if enabledsources.contains(&"vxvault") {
         println!("\nPlease enable your VPN before continuing\nPress enter to continue...");
         stdout().flush().unwrap();
-        stdin().read(&mut [0]).unwrap();
+        let mut void = String::new();
+        stdin()
+            .read_line(&mut void)
+            .expect("Failed to read from stdin");
 
         println!("Waiting for an internet connection...\n");
         loop {
@@ -129,7 +134,7 @@ async fn download() {
     }
 
     let mut msdata = vec![];
-    let mut malshareapi = "".to_string();
+    let mut malshareapi = String::new();
 
     if enabledsources.contains(&"malshare") {
         print!("Please paste your Malshare API key: ");
@@ -222,20 +227,91 @@ async fn download() {
         println!("Done");
     }
 
-    let mut vxres = "".to_string();
+    let mut vxurls = vec![];
 
     if enabledsources.contains(&"vxvault") {
+        let vxcount;
+        loop {
+            print!("How many samples do you want to download from VX Vault? (I don't recommend more than 1000): ");
+            stdout().flush().unwrap();
+            let mut vxbuf = String::new();
+            stdin()
+                .read_line(&mut vxbuf)
+                .expect("Failed to read from stdin");
+
+            let vxstr: String = vxbuf.split_whitespace().collect();
+
+            vxcount = match vxstr.parse::<i32>() {
+                Ok(i) => i,
+                Err(_) => {
+                    println!("Please enter a valid number");
+                    continue;
+                }
+            };
+
+            break;
+        }
+
         println!("Getting data from VX Vault...");
 
         // Using HTTP because VX Vault's certificate isn't "trusted"
-        vxres = reqwest::Client::new()
-            .get("http://vxvault.net/URL_List.php")
+        let mut map = HashMap::new();
+        map.insert("login", "infected");
+        map.insert("password", "infected");
+
+        let vxcookie = reqwest::Client::new()
+            .post("http://vxvault.net/login.php")
+            .form(&map)
+            .send()
+            .await
+            .unwrap();
+
+        let cookie = vxcookie
+            .headers()
+            .get(SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap();
+
+        // Using HTTP because VX Vault's certificate isn't trusted
+        let vxres = reqwest::Client::new()
+            .get(format!("http://vxvault.net/ViriList.php?s=0&m={}", vxcount))
+            .header("Cookie", cookie)
             .send()
             .await
             .unwrap()
             .text()
             .await
             .unwrap();
+
+        let document = Document::from(&vxres);
+
+        document.select("tr").iter().skip(1).for_each(|athing| {
+            let url = athing
+                .children()
+                .get(1)
+                .unwrap()
+                .children()
+                .get(2)
+                .unwrap()
+                .text()
+                .to_string();
+
+            if url.to_string().ends_with("exe") {
+                vxurls.push(format!(
+                    "http://{}",
+                    athing
+                        .children()
+                        .get(1)
+                        .unwrap()
+                        .children()
+                        .get(2)
+                        .unwrap()
+                        .text()
+                        .to_string()
+                ));
+            }
+        });
 
         println!("Done");
     }
@@ -350,16 +426,7 @@ async fn download() {
         match source {
             &"malwarebazaar" => count += mblist.len(),
             &"malshare" => count += msdata.len(),
-            &"vxvault" => {
-                let mut vxcount = 0;
-                for line in vxres.lines().skip(3) {
-                    if !line.to_string().ends_with("exe") {
-                        continue;
-                    }
-                    vxcount += 1;
-                }
-                count += vxcount;
-            }
+            &"vxvault" => count += vxurls.len(),
             _ => {}
         }
     }
@@ -567,19 +634,15 @@ async fn download() {
             let mut blacklist = vec![];
             let green_bold = Style::new().green().bold();
 
-            for line in vxres.lines().skip(3) {
-                if !line.to_string().ends_with("exe") {
-                    continue;
-                }
-
-                let host = Url::parse(line).unwrap().host().unwrap().to_string();
+            for url in vxurls {
+                let host = Url::parse(&url).unwrap().host().unwrap().to_string();
                 if blacklist.contains(&host) {
                     pb_vx.set_length(pb_vx.length().unwrap() - 1);
                     continue;
                 }
 
                 let result = reqwest::Client::new()
-                    .get(line)
+                    .get(url)
                     .timeout(Duration::from_secs(15))
                     .send()
                     .await;
@@ -593,7 +656,9 @@ async fn download() {
                     }
                 };
 
-                if StatusCode::is_server_error(&res.status()) {
+                if StatusCode::is_server_error(&res.status())
+                    || StatusCode::is_client_error(&res.status())
+                {
                     continue;
                 }
 
