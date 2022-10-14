@@ -34,6 +34,7 @@ use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::io::Write;
+use std::net::TcpStream;
 use std::path::Path;
 use std::process;
 use std::process::Command;
@@ -124,14 +125,10 @@ async fn download() {
 
         println!("Waiting for an internet connection...\n");
         loop {
-            let testinternet = reqwest::Client::new()
-                .get("https://1.1.1.1")
-                .timeout(Duration::from_secs(10))
-                .send()
-                .await;
-            match testinternet {
-                Ok(_) => break,
-                Err(_) => continue,
+            if let Ok(_) = TcpStream::connect("1.1.1.1:80") {
+                break;
+            } else {
+                continue;
             }
         }
     }
