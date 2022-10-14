@@ -125,7 +125,7 @@ async fn download() {
 
         println!("Waiting for an internet connection...\n");
         loop {
-            if let Ok(_) = TcpStream::connect("1.1.1.1:8080") {
+            if let Ok(_) = TcpStream::connect("1.1.1.1:80") {
                 break;
             } else {
                 continue;
@@ -298,10 +298,7 @@ async fn download() {
                 .to_string();
 
             if url.ends_with("exe") {
-                vxurls.push(format!(
-                    "http://{}",
-                    url
-                ));
+                vxurls.push(format!("http://{}", url));
             }
         });
 
