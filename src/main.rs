@@ -125,10 +125,14 @@ async fn download() {
 
         println!("Waiting for an internet connection...\n");
         loop {
-            if let Ok(_) = TcpStream::connect("1.1.1.1:80") {
-                break;
-            } else {
-                continue;
+            let testinternet = reqwest::Client::new()
+                .get("https://1.1.1.1",)
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await;
+            match testinternet {
+                Ok(_) => break,
+                Err(_) => continue,
             }
         }
     }
