@@ -125,7 +125,7 @@ async fn download() {
 
         println!("Waiting for an internet connection...\n");
         loop {
-            if let Ok(_) = TcpStream::connect("1.1.1.1:80") {
+            if let Ok(_) = TcpStream::connect("example.org:80") {
                 break;
             } else {
                 continue;
